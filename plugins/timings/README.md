@@ -16,9 +16,9 @@ matches on and several can land in one context window:
 
 | Tag | When | Example |
 | --- | --- | --- |
-| `timing-prompt` | every prompt | `<timing-prompt>now=20:31:04 date=2026-08-15 idle=5m02s prev_turn=4m12s (tools 2m30s: Bash×3 2m10s; your approvals 40s; model ~1m02s)</timing-prompt>` |
-| `timing-tool` | after a slow tool call | `<timing-tool>Bash took 2m10s (20:28:54→20:31:04, plus 40s waiting for approval).</timing-tool>` |
-| `timing-interrupt` | a call that never finished | `<timing-interrupt>Bash was started 1m02s before this message and never finished, so it was interrupted…</timing-interrupt>` |
+| `timing-prompt` | every prompt | `<timing-prompt>now=20:31:04 date=2026-08-15 idle=5m02s prev_turn=4m12s (tools 2m30s: Bash×3 2m10s; awaiting the user 40s; model ~1m02s)</timing-prompt>` |
+| `timing-tool` | after a slow tool call | `<timing-tool>Bash took 2m10s (20:28:54→20:31:04).</timing-tool>` |
+| `timing-interrupt` | a call that never finished | `<timing-interrupt>Bash was started 1m02s before the user's next message and never finished, so it was interrupted…</timing-interrupt>` |
 | `timing-compaction` | first prompt after a compaction | `<timing-compaction>compacted 9h12m ago, at 22:10 on 2026-08-15</timing-compaction>` |
 | `timing-session` | a resumed, forked or dormant session | `<timing-session>source=resume idle for 3d, last active 18:40 on 2026-08-13</timing-session>` |
 
@@ -39,13 +39,36 @@ session, a day rollover, and any past instant that was not today. A field that
 never changes a decision is worse than absent — it teaches the reader to skim the
 block that also carries the fields that do.
 
-### Approval time is not tool time
+### A gated call measures the user, not the tool
 
-`PreToolUse` fires *before* the permission prompt, so a naive stopwatch reports a
-`cat` that waited 40 seconds for your approval as a 40-second command. The
-`PermissionRequest` event carries the same `tool_use_id`, so the wait is
-subtracted from the call and reported separately — as `plus 40s waiting for
-approval` on the call, and `your approvals 40s` in the turn breakdown.
+`PreToolUse` fires before the permission prompt, so a naive stopwatch reports a
+one-line write to `/tmp` that sat unapproved for 90 seconds as a 90-second
+`Write`. Splitting that out is harder than it looks:
+
+- `PermissionRequest` lands ~100 ms after `PreToolUse`. It marks the request, not
+  the answer, and (despite the docs) carries no `tool_use_id` here.
+- `Notification` with `notification_type: permission_prompt` marks when the
+  prompt actually reached the user — deferred by the harness while you are still
+  typing, so it can be a minute later.
+- **Nothing at all fires on approval.**
+
+So a gated call has three spans and only two known edges, and is reported as
+bounds rather than a number:
+
+```
+Write completed 1m42s after it was requested (02:11:49→02:13:30), but it was gated on
+the user's approval: 54s before the prompt reached the user, then 48s covering both
+their decision and the run itself. The call ran at most 48s -- likely far less, and
+there is no event for the moment they approved.
+```
+
+Gated calls are reported regardless of the tool threshold, because the headline
+figure would otherwise be read as tool time. The scratchpad hint is suppressed on
+them for the same reason: the call was not necessarily slow.
+
+Correlation is by time window, since neither permission event carries a
+`tool_use_id`. With several prompts pending at once the attribution is
+approximate.
 
 ### Interrupts are reported as a bound, not a measurement
 
@@ -118,6 +141,9 @@ for your machine in the turn breakdown rather than trusting this paragraph.
   machine without `jq` are worse than no hooks.
 - **Never blocks.** Every failure path exits 0 with no output. Malformed stdin,
   a missing data directory and unknown events are all no-ops.
+- **The injected text is written for its reader.** It goes to Claude, not to the
+  terminal, so it says "the user" and never "you" — second person in a block
+  Claude reads makes Claude the one who approved the tool call.
 - **No lost measurements under parallelism.** Tool stamps are one file per
   `tool_use_id` and completed calls are appended to a log, so concurrent tool
   calls cannot clobber a shared JSON object.

@@ -78,7 +78,8 @@ function main() {
       case "UserPromptSubmit": return onUserPromptSubmit(dir, now);
       case "Stop": return onStop(dir, now);
       case "PreCompact": return onPreCompact(dir, now);
-      case "PermissionRequest": return onPermissionRequest(dir, event, now);
+      case "PermissionRequest":
+      case "Notification": return onPermissionEvent(dir, event, now);
       case "PreToolUse": return onPreToolUse(dir, event, now);
       case "PostToolUse":
       case "PostToolUseFailure": return onPostToolUse(dir, event, now);
@@ -109,8 +110,11 @@ function onSessionStart(dir, event, now) {
   if (source === "startup" && gapMs === null) return;
   if (gapMs !== null && gapMs < config.sessionGapMs && source === "startup") return;
 
+  // A bare `source=resume` says nothing worth reading. If the gap is known it
+  // is always included here, whatever the threshold: on a resume the gap is the
+  // entire point, and a short one is itself the answer to "how long was I away?"
   const parts = [`source=${source}`];
-  if (gapMs !== null && gapMs >= config.sessionGapMs) parts.push(`idle for ${fmt(gapMs)}, last active ${stamp(lastAt, now)}`);
+  if (gapMs !== null) parts.push(`idle for ${fmt(gapMs)}, last active ${stamp(lastAt, now)}`);
   emit({
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `<timing-session>${parts.join(" ")}</timing-session>` },
   });
@@ -124,19 +128,22 @@ function onPreCompact(dir, now) {
   writeState(dir, { ...state, compactedAt: now });
 }
 
-// PermissionRequest carries the tool_use_id, so approval wait can be attributed
-// to the exact call rather than guessed from a time window. Without this, a
-// tool that waited three minutes for approval reports as a three-minute tool.
-function onPermissionRequest(dir, event, now) {
-  const id = safeId(event.tool_use_id);
-  if (!id) return;
-  const path = join(dir, "tools", `${id}.json`);
-  try {
-    const stamp = JSON.parse(readFileSync(path, "utf8"));
-    writeFileSync(path, JSON.stringify({ ...stamp, askedAt: now }));
-  } catch {
-    // No stamp yet, or it is already consumed: approval time is simply unknown.
-  }
+// The moment the user *approves* a tool call is not observable: no event fires
+// for it. What can be seen is when the prompt was raised (PermissionRequest,
+// which lands ~100ms after PreToolUse and says nothing about the user) and when
+// it was actually put in front of them (Notification/permission_prompt, which
+// the harness defers while they are still typing). Approval happens somewhere
+// between that notification and PostToolUse, so a call gated on permission
+// yields two bounds and no measurement -- see describeGatedCall.
+//
+// Neither event carries tool_use_id in practice, whatever the docs table says,
+// so these are correlated by time window rather than by id. With parallel
+// permission prompts that attribution is approximate, and deliberately worded
+// as such.
+function onPermissionEvent(dir, event, now) {
+  if (event.hook_event_name === "Notification" && event.notification_type !== "permission_prompt") return;
+  const kind = event.hook_event_name === "Notification" ? "shown" : "asked";
+  appendLog(dir, "permissions.ndjson", { kind, at: now, tool: event.tool_name ?? null });
 }
 
 // SessionEnd is not the end of the session: Ctrl+C prints `claude --resume
@@ -237,6 +244,7 @@ function onStop(dir, now) {
     lastTurn,
   });
 
+  rmSync(join(dir, "permissions.ndjson"), { force: true }); // turn-scoped, like turn.ndjson
   sweepStaleStamps(dir, now);
 }
 
@@ -259,26 +267,31 @@ function onPostToolUse(dir, event, now) {
   const name = event.tool_name ?? stamp.name ?? "tool";
   const failed = event.hook_event_name === "PostToolUseFailure";
 
-  // Time spent waiting for the user to approve is not time the tool ran, and
-  // counting it as such is how a `cat` reports as a 40-second command.
-  const approvalMs = Number.isFinite(stamp.askedAt) ? Math.max(0, stamp.askedAt - stamp.at) : 0;
-  const ranMs = Math.max(0, elapsedMs - approvalMs);
+  // A call the user had to approve is mostly a measurement of the user, not of
+  // the tool: a one-line write to /tmp reports as 1m42s if the prompt sat there
+  // for a minute and a half. shownAt is when the prompt reached them.
+  const shownAt = permissionShownAt(dir, stamp.at, now);
+  const waitMs = shownAt ? shownAt - stamp.at : 0;
+  const ranMs = shownAt ? now - shownAt : elapsedMs;
 
-  appendTurnLog(dir, { t: "tool", name, ms: ranMs, waitMs: approvalMs, failed });
+  appendTurnLog(dir, { t: "tool", name, ms: ranMs, waitMs, failed, gated: Boolean(shownAt) });
   recordHookCost(dir);
 
-  if (ranMs < config.toolThresholdMs) return;
+  // A gated call is worth reporting whatever the numbers, because the headline
+  // figure would otherwise be read as tool time.
+  if (!shownAt && ranMs < config.toolThresholdMs) return;
 
-  const detail = [];
-  if (ranMs >= config.clockPairMs) detail.push(`${clock(now - ranMs)}→${clock(now)}`);
-  if (approvalMs >= 1000) detail.push(`plus ${fmt(approvalMs)} waiting for approval`);
-
-  let text = `${name} ${failed ? "ran for" : "took"} ${fmt(ranMs)}`;
-  if (detail.length) text += ` (${detail.join(", ")})`;
+  let text;
+  if (shownAt) {
+    text = describeGatedCall(name, failed, { startedAt: stamp.at, shownAt, endedAt: now });
+  } else {
+    const detail = ranMs >= config.clockPairMs ? ` (${clock(now - ranMs)}→${clock(now)})` : "";
+    text = `${name} ${failed ? "ran for" : "took"} ${fmt(ranMs)}${detail}`;
+  }
 
   // A call this long has real output to lose, and an interrupt loses all of it:
   // the harness hands back a rejection, never the partial stdout.
-  if (ranMs >= config.scratchpadHintMs && name === "Bash") {
+  if (!shownAt && ranMs >= config.scratchpadHintMs && name === "Bash") {
     text += ". Next time a command runs this long, tee it to a scratchpad log or run it in the background, so an interrupt does not throw the output away";
   }
 
@@ -292,16 +305,63 @@ function onPostToolUse(dir, event, now) {
 
 /* ------------------------------------------------------------- turn totals */
 
-// One append-only line per completed tool call. Appends of this size are atomic
-// on the platforms Claude Code runs on, so parallel tool calls cannot clobber
-// each other the way a shared JSON object would.
-function appendTurnLog(dir, entry) {
+// A permission-gated call splits into three spans, only two of which have
+// known edges: the wait before the prompt reached the user, the wait while it
+// sat in front of them, and the run itself. Approval is invisible, so the last
+// two share a boundary that can only be bounded, never measured. Reporting a
+// single number here is what produced "Write took 1m42s" for a one-line write.
+function describeGatedCall(name, failed, { startedAt, shownAt, endedAt }) {
+  const waited = fmt(shownAt - startedAt);
+  const after = fmt(endedAt - shownAt);
+  return (
+    `${name} ${failed ? "ended" : "completed"} ${fmt(endedAt - startedAt)} after it was requested ` +
+    `(${clock(startedAt)}→${clock(endedAt)}), but it was gated on the user's approval: ` +
+    `${waited} before the prompt reached the user, then ${after} covering both their decision and the run itself. ` +
+    `The call ran at most ${after} -- likely far less, and there is no event for the moment they approved`
+  );
+}
+
+// The most recent permission prompt shown inside this call's window. Correlated
+// by time rather than by tool_use_id, which these events do not carry.
+function permissionShownAt(dir, from, to) {
+  for (const entry of readLog(dir, "permissions.ndjson").reverse()) {
+    if (entry.kind === "shown" && entry.at >= from && entry.at <= to) return entry.at;
+  }
+  return null;
+}
+
+// One append-only line per record. Appends of this size are atomic on the
+// platforms Claude Code runs on, so parallel tool calls cannot clobber each
+// other the way a shared JSON object would.
+function appendLog(dir, file, entry) {
   try {
     mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, "turn.ndjson"), `${JSON.stringify(entry)}\n`);
+    appendFileSync(join(dir, file), `${JSON.stringify(entry)}\n`);
   } catch (err) {
-    logError("appendTurnLog", err);
+    logError(`appendLog:${file}`, err);
   }
+}
+
+function readLog(dir, file) {
+  try {
+    return readFileSync(join(dir, file), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function appendTurnLog(dir, entry) {
+  appendLog(dir, "turn.ndjson", entry);
 }
 
 function drainTurnLog(dir) {
@@ -373,7 +433,7 @@ function describeTurn(turn) {
   const detail = [];
 
   if (turn.tools.length) detail.push(describeTools(turn));
-  if (turn.waitMs >= 1000) detail.push(`your approvals ${fmt(turn.waitMs)}`);
+  if (turn.waitMs >= 1000) detail.push(`awaiting the user ${fmt(turn.waitMs)}`);
 
   const modelMs = turn.durationMs - turn.toolMs - turn.waitMs;
   if (modelMs >= 1000) detail.push(`model ~${fmt(modelMs)}`);
@@ -460,8 +520,8 @@ function describeInterrupt(stamp, now) {
   const from = Number.isFinite(stamp.askedAt) ? stamp.askedAt : stamp.at;
   const bound = fmt(now - from);
   return (
-    `${name} was started ${fmt(spanMs)} before this message and never finished, so it was interrupted. ` +
-    `At most ${bound} of that was the call running -- the span also covers your typing` +
+    `${name} was started ${fmt(spanMs)} before the user's next message and never finished, so it was interrupted. ` +
+    `At most ${bound} of that was the call running -- the span also covers the time the user spent typing` +
     (Number.isFinite(stamp.askedAt) ? "" : " and any wait for approval") +
     `, so treat it as an upper bound, not a measurement`
   );

@@ -95,16 +95,31 @@ const failed = run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", too
 );
 check("failed tool is still timed", /Bash ran for \d+s/.test(ctx(failed)), ctx(failed));
 
-// --- approval wait is not tool time: the `cat` that reported as 40s ---
-console.log("\n  approval wait");
-run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_approve" });
-run({ ...S, hook_event_name: "PermissionRequest", tool_name: "Bash", tool_use_id: "toolu_approve" }, { sleepMs: 1200 });
-const approved = run(
-  { ...S, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_approve" },
-  { env: { CLAUDE_PLUGIN_OPTION_TOOL_THRESHOLD_SECONDS: "0" } },
+// --- a permission-gated call: the Write to /tmp that reported as 1m42s ---
+// PermissionRequest lands with PreToolUse and says nothing about the user;
+// Notification/permission_prompt is when the prompt actually reached them.
+console.log("\n  permission-gated calls");
+run({ ...S, hook_event_name: "PreToolUse", tool_name: "Write", tool_use_id: "toolu_gated" });
+run({ ...S, hook_event_name: "PermissionRequest", tool_name: "Write" });
+run({ ...S, hook_event_name: "Notification", notification_type: "permission_prompt" }, { sleepMs: 1200 });
+const gated = run({ ...S, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "toolu_gated" }, { sleepMs: 1100 });
+check("a gated call is reported even when short", ctx(gated).includes("<timing-tool>"), ctx(gated));
+check("it is not presented as tool time", !/^<timing-tool>Write took/.test(ctx(gated)), ctx(gated));
+check("the approval gate is named", /gated on the user's approval/.test(ctx(gated)), ctx(gated));
+check("the wait before the prompt is given", /\d+s before the prompt reached the user/.test(ctx(gated)), ctx(gated));
+check("the run is bounded, not measured", /ran at most \d+s/.test(ctx(gated)), ctx(gated));
+check("no scratchpad hint on a gated call", !ctx(gated).includes("tee it to a scratchpad"), ctx(gated));
+
+// An unrelated notification must not turn an ordinary call into a gated one.
+run({ ...S, hook_event_name: "Stop" });
+run({ ...S, hook_event_name: "UserPromptSubmit" });
+run({ ...S, hook_event_name: "Notification", notification_type: "idle_prompt" });
+run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_ungated" });
+const ungated = run(
+  { ...S, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_ungated" },
+  { sleepMs: 1200, env: { CLAUDE_PLUGIN_OPTION_TOOL_THRESHOLD_SECONDS: "1" } },
 );
-check("approval wait is excluded from the duration", /Bash took 0s/.test(ctx(approved)), ctx(approved));
-check("approval wait is still reported", /plus \d+s waiting for approval/.test(ctx(approved)), ctx(approved));
+check("a non-permission notification is ignored", /Bash took \d+s\./.test(ctx(ungated)), ctx(ungated));
 
 // --- an interrupted call: no Post, so the stamp is the only evidence ---
 console.log("\n  interrupts");
@@ -112,7 +127,7 @@ run({ ...S, hook_event_name: "Stop" });
 run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_killed" });
 const afterKill = run({ ...S, hook_event_name: "UserPromptSubmit" }, { sleepMs: 1100 });
 check("an interrupted call is reported", ctx(afterKill).includes("<timing-interrupt>"), ctx(afterKill));
-check("the interrupted tool is named", /Bash was started \d+s before this message/.test(ctx(afterKill)), ctx(afterKill));
+check("the interrupted tool is named", /Bash was started \d+s before the user's next message/.test(ctx(afterKill)), ctx(afterKill));
 check("the span is labelled a bound, not a measurement", /upper bound, not a measurement/.test(ctx(afterKill)), ctx(afterKill));
 check("idle is suppressed after an interrupt", !ctx(afterKill).includes("idle="), ctx(afterKill));
 const clearedStamps = readdirSync(join(dataDir, "sessions", S.session_id, "tools"));

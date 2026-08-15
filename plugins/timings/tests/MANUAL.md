@@ -45,16 +45,18 @@ The point of this one is that the span is **not** 10 seconds and does not claim
 to be. If the agent quotes it back as "you waited N seconds", the wording has
 regressed.
 
-## 2. Approval wait is not tool time
+## 2. A gated call is not a slow tool
 
-- **Agent:** run a trivially fast command that needs approval, e.g.
-  `Bash(command="cat README.md")`.
+- **Agent:** do something trivially fast that still needs approval — a `Write`
+  to `/tmp` works, since it is outside the project.
 - **Human:** leave the permission prompt sitting for at least 30 seconds, then
-  approve.
-- **Agent:** should see the call reported as taking well under a second, with
-  `plus 30s waiting for approval` — not as a 30-second command. Below the tool
-  threshold it may report nothing at all, which is also correct; check the turn
-  breakdown on the next prompt for `your approvals 30s`.
+  approve. Note that the prompt only appears once you stop typing.
+- **Agent:** should see `gated on the user's approval`, a `Ns before the prompt
+  reached the user` figure, and `ran at most Ns`. It must **not** report a plain
+  `Write took 1m42s` — that reads as a slow tool and is the bug this replaced.
+
+A gated call is reported even when it is far below the tool threshold, so
+silence here is a failure, not a pass.
 
 ## 3. The scratchpad hint
 
@@ -83,10 +85,10 @@ regressed.
 
 ## What a good report from the agent looks like
 
-> I saw `<timing-interrupt>Bash was started 1m04s before this message and never
-> finished, so it was interrupted. At most 1m04s of that was the call running --
-> the span also covers your typing and any wait for approval, so treat it as an
-> upper bound, not a measurement</timing-interrupt>`, and no `idle=` field.
+> I saw `<timing-interrupt>Bash was started 1m04s before the user's next message
+> and never finished, so it was interrupted. At most 1m04s of that was the call
+> running -- the span also covers the time the user spent typing, so treat it as
+> an upper bound, not a measurement</timing-interrupt>`, and no `idle=` field.
 >
 > You said you gave it ~10s, so the bound is behaving as intended: it is much
 > larger than the true run, and labelled as such.
