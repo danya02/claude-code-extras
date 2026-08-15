@@ -74,7 +74,7 @@ function main() {
 
     switch (event.hook_event_name) {
       case "SessionStart": return onSessionStart(dir, event, now);
-      case "SessionEnd": return onSessionEnd(dir);
+      case "SessionEnd": return onSessionEnd(dir, now);
       case "UserPromptSubmit": return onUserPromptSubmit(dir, now);
       case "Stop": return onStop(dir, now);
       case "PreCompact": return onPreCompact(dir, now);
@@ -102,12 +102,15 @@ function onSessionStart(dir, event, now) {
   // the transcript reads as if it happened just now, and the repo may have
   // moved on for days. A plain startup with no prior state has nothing to say.
   const source = event.source ?? "startup";
-  const gapMs = state.updatedAt ? now - state.updatedAt : null;
+  // endedAt is set when the session was closed cleanly; updatedAt covers a
+  // session that simply stopped being touched.
+  const lastAt = state.endedAt ?? state.updatedAt ?? null;
+  const gapMs = lastAt ? now - lastAt : null;
   if (source === "startup" && gapMs === null) return;
   if (gapMs !== null && gapMs < config.sessionGapMs && source === "startup") return;
 
   const parts = [`source=${source}`];
-  if (gapMs !== null && gapMs >= config.sessionGapMs) parts.push(`idle for ${fmt(gapMs)}, last active ${stamp(state.updatedAt, now)}`);
+  if (gapMs !== null && gapMs >= config.sessionGapMs) parts.push(`idle for ${fmt(gapMs)}, last active ${stamp(lastAt, now)}`);
   emit({
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `<timing-session>${parts.join(" ")}</timing-session>` },
   });
@@ -136,8 +139,20 @@ function onPermissionRequest(dir, event, now) {
   }
 }
 
-function onSessionEnd(dir) {
-  rmSync(dir, { recursive: true, force: true });
+// SessionEnd is not the end of the session: Ctrl+C prints `claude --resume
+// <id>`, and the gap across that resume is the most valuable thing this plugin
+// can report -- it is the case where the transcript reads as if no time passed
+// at all. Deleting the state here would throw away the only thing to measure it
+// against, and take the event log with it, exactly when someone wants to ask
+// "did that hook fire?" about a session that has just ended.
+//
+// So only turn-scoped scratch is dropped. Whole session directories are swept
+// after a week at SessionStart, which is what bounds the growth.
+function onSessionEnd(dir, now) {
+  const state = readState(dir);
+  writeState(dir, { ...state, endedAt: now, turnStartAt: null });
+  rmSync(join(dir, "tools"), { recursive: true, force: true });
+  rmSync(join(dir, "turn.ndjson"), { force: true });
 }
 
 function onUserPromptSubmit(dir, now) {

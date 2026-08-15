@@ -1,13 +1,19 @@
 {
   "name": "quota",
   "displayName": "Quota",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lets Claude see your Claude subscription usage: the 5-hour session window, the weekly windows and extra-usage credits, each as used% against elapsed%, so pace is visible rather than just the raw number.",
-  "keywords": ["usage", "quota", "rate-limit", "context", "hooks", "mcp"],
+  "keywords": [
+    "usage",
+    "quota",
+    "rate-limit",
+    "context",
+    "hooks",
+    "mcp"
+  ],
   "author": {
     "name": "Danya Generalov"
   },
-  "hooks": "./hooks/hooks.json",
   "mcpServers": "./.mcp.json",
   "userConfig": {
     "poll_interval_seconds": {

@@ -196,8 +196,20 @@ console.log(`  ~${perInvocation.toFixed(0)}ms per hook invocation (${N * 2} runs
 check("hook invocation stays under 250ms", perInvocation < 250, `${perInvocation.toFixed(0)}ms`);
 
 // --- cleanup ---
+// Ctrl+C ends the session, but `claude --resume` brings it back -- so what
+// survives SessionEnd is exactly what the resume gap is measured against.
+run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_leftover" });
 run({ ...S, hook_event_name: "SessionEnd" });
-check("SessionEnd removes session state", !existsSync(join(dataDir, "sessions", S.session_id)));
+const sessionDir = join(dataDir, "sessions", S.session_id);
+check("SessionEnd keeps the state a resume needs", existsSync(join(sessionDir, "state.json")));
+check("SessionEnd keeps the event log", existsSync(join(sessionDir, "events.ndjson")));
+check("SessionEnd drops turn-scoped scratch", !existsSync(join(sessionDir, "tools")) && !existsSync(join(sessionDir, "turn.ndjson")));
+
+const resumed2 = run(
+  { ...S, hook_event_name: "SessionStart", source: "resume" },
+  { sleepMs: 1100, env: { CLAUDE_PLUGIN_OPTION_SESSION_GAP_SECONDS: "1" } },
+);
+check("a resumed session can still measure its gap", /source=resume idle for \d+s, last active \d{2}:\d{2}:\d{2}/.test(ctx(resumed2)), ctx(resumed2));
 
 rmSync(dataDir, { recursive: true, force: true });
 console.log(`\n${failures ? "FAILED" : "PASSED"}: ${checks - failures}/${checks} checks`);

@@ -24,11 +24,15 @@ Everything here is meant to be dropped into an unfamiliar machine and work:
   with it); no `jq`, no `npm install`.
 - **Hooks never block.** Any internal failure exits 0 with no output.
 - **Tests run with `node <plugin>/tests/run.mjs`**, no framework, no network.
-- **Bump `version` in `plugin.json` for every change you want installed.**
-  Installing pulls the marketplace copy into `~/.claude/plugins/cache/`, and an
-  unchanged version leaves the cached copy in place — the update reports success
-  while the old code keeps running. The quickest way to tell which copy is live
-  is to look for something only the new one writes.
+- **Bump `version` in `plugin.json` for every change you want installed.** The
+  cache is keyed by version (`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`),
+  so an unchanged version leaves the old copy in place while the update reports
+  success. Hooks are also bound when a session starts, so updating inside a
+  session keeps the old code running until you start a new one.
+- **Don't declare the standard paths in `plugin.json`.** `hooks/hooks.json` is
+  loaded automatically; naming it in `manifest.hooks` too is a duplicate load,
+  and Claude Code rejects the whole file — so the plugin silently runs with no
+  hooks at all. `manifest.hooks` is only for *additional* hook files.
 
 ## Development
 

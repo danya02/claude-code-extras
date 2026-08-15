@@ -4,13 +4,30 @@ Some of this plugin's behaviour only exists when a real person interrupts a real
 tool call, approves a real permission prompt, or walks away from a real session.
 `run.mjs` fakes those events; these five checks do not.
 
-Run them in a session with the plugin installed. Each has a **human** part and an
-**agent** part — the agent should report what it saw in its context, quoting the
-block verbatim, and the human confirms it matches.
+## Before you start: are you running the version you think you are?
 
-If the agent sees nothing, check `events.ndjson` in the session's state directory
-(`~/.claude/plugins/data/timings-*/sessions/<session_id>/`): if the event is not
-in the log, the hook is not firing, which is a different problem from the hook
+Hooks are loaded when a session starts. Updating the plugin **inside** a session
+leaves that session running the old code, while `/plugin` cheerfully reports the
+new version — this has already cost one full test round. So:
+
+1. Update the plugin (`/plugin`), then **quit and start a new session**.
+2. In the new session, check the block on your first message reads
+   `now=HH:MM:SS`. If it reads `now=2026-08-16T…+03:00`, you are on 0.1.x and
+   nothing below means anything yet.
+
+The versioned install path is `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`,
+and every version ever installed stays there, so it is worth confirming which one
+`installed_plugins.json` actually points at.
+
+Each check below has a **human** part and an **agent** part. The agent should
+quote what it saw **verbatim**, and say explicitly whether it came from its
+injected context or from a file it read — an agent that has just read this file
+has all the example blocks in its context and can quote them back in good faith.
+
+If the agent sees nothing, check the event log at
+`~/.claude/plugins/data/timings-*/sessions/<session_id>/events.ndjson`. It
+survives the session ending, so it can be read after the fact. If the event is
+not in the log, the hook is not firing — a different problem from the hook
 computing the wrong thing.
 
 ---

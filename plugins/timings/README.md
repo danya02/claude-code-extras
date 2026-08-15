@@ -124,8 +124,17 @@ for your machine in the turn breakdown rather than trusting this paragraph.
 - **Stamps get consumed, not swept.** `PostToolUse` does not fire for a denied or
   failed call, so `PostToolUseFailure` and `PermissionDenied` are hooked too. A
   stale sweep still runs as a backstop for interrupts.
-- State lives in `${CLAUDE_PLUGIN_DATA}/sessions/<session_id>/` and is deleted at
-  `SessionEnd`; stray directories are swept after 7 days.
+- **`SessionEnd` is not the end of the session.** Ctrl+C prints
+  `claude --resume <id>`, and the gap across that resume is the most valuable
+  thing here — it is precisely the case where the transcript reads as if no time
+  had passed. So `SessionEnd` drops only turn-scoped scratch and keeps the state
+  the resume is measured against, along with the event log. State lives in
+  `${CLAUDE_PLUGIN_DATA}/sessions/<session_id>/` and whole directories are swept
+  after 7 days at `SessionStart`, which is what bounds the growth.
+- **The manifest does not declare `hooks/hooks.json`.** That path is loaded
+  automatically, and naming it in `manifest.hooks` as well is a duplicate load
+  that Claude Code rejects outright — leaving the plugin installed, enabled, and
+  running no hooks at all.
 
 ## Tests
 
