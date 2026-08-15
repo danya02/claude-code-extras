@@ -1,0 +1,14 @@
+{
+  "name": "claude-code-extras",
+  "description": "Small, low-dependency, broadly applicable hooks and skills for Claude Code.",
+  "owner": {
+    "name": "Danya Generalov"
+  },
+  "plugins": [
+    {
+      "name": "timings",
+      "source": "./plugins/timings",
+      "description": "Gives Claude a sense of elapsed time: idle gaps, assistant turn duration split by tool vs model, and per-tool-call durations."
+    }
+  ]
+}

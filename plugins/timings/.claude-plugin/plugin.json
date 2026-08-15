@@ -1,0 +1,61 @@
+{
+  "name": "timings",
+  "displayName": "Timings",
+  "version": "0.1.0",
+  "description": "Gives Claude a sense of elapsed time: idle gaps between turns, assistant turn duration split by tool vs model, and durations for individual tool calls.",
+  "keywords": ["timing", "idle", "context", "hooks", "observability"],
+  "author": {
+    "name": "Danya Generalov"
+  },
+  "hooks": "./hooks/hooks.json",
+  "userConfig": {
+    "tool_threshold_seconds": {
+      "type": "number",
+      "title": "Tool report threshold (seconds)",
+      "description": "Report an individual tool call back to Claude only if it ran at least this long. 0 reports every call.",
+      "default": 10,
+      "min": 0,
+      "max": 3600
+    },
+    "idle_threshold_seconds": {
+      "type": "number",
+      "title": "Idle report threshold (seconds)",
+      "description": "Report the gap since Claude's last response only if it was at least this long.",
+      "default": 10,
+      "min": 0,
+      "max": 3600
+    },
+    "turn_threshold_seconds": {
+      "type": "number",
+      "title": "Turn report threshold (seconds)",
+      "description": "Report the previous assistant turn's duration and its tool/model breakdown only if the turn lasted at least this long.",
+      "default": 20,
+      "min": 0,
+      "max": 3600
+    },
+    "show_clock": {
+      "type": "boolean",
+      "title": "Include wall-clock time",
+      "description": "Include the local date and time with UTC offset in every injected timing block.",
+      "default": true
+    },
+    "visible_idle": {
+      "type": "boolean",
+      "title": "Show idle time in the transcript",
+      "description": "Also surface the idle gap as a user-visible message, not just as hidden context for Claude.",
+      "default": true
+    },
+    "show_hook_overhead": {
+      "type": "boolean",
+      "title": "Report this plugin's own overhead",
+      "description": "Include the total time this plugin's hooks spent running during the turn, so its cost is visible rather than assumed.",
+      "default": false
+    },
+    "debug_log": {
+      "type": "boolean",
+      "title": "Log errors",
+      "description": "Append internal errors to errors.ndjson in the plugin's data directory. Hooks stay silent and non-blocking either way.",
+      "default": false
+    }
+  }
+}
