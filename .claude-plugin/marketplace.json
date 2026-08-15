@@ -9,6 +9,11 @@
       "name": "timings",
       "source": "./plugins/timings",
       "description": "Gives Claude a sense of elapsed time: idle gaps, assistant turn duration split by tool vs model, and per-tool-call durations."
+    },
+    {
+      "name": "quota",
+      "source": "./plugins/quota",
+      "description": "Lets Claude see your Claude subscription usage: the 5-hour session window, the weekly windows and extra-usage credits, each as used% against elapsed%, so pace is visible rather than just the raw number."
     }
   ]
 }

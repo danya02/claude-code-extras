@@ -1,0 +1,86 @@
+{
+  "name": "quota",
+  "displayName": "Quota",
+  "version": "0.1.0",
+  "description": "Lets Claude see your Claude subscription usage: the 5-hour session window, the weekly windows and extra-usage credits, each as used% against elapsed%, so pace is visible rather than just the raw number.",
+  "keywords": ["usage", "quota", "rate-limit", "context", "hooks", "mcp"],
+  "author": {
+    "name": "Danya Generalov"
+  },
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "userConfig": {
+    "poll_interval_seconds": {
+      "type": "number",
+      "title": "Minimum seconds between polls",
+      "description": "The usage endpoint rate-limits per OAuth token, and every Claude Code session on this machine shares one token. All sessions poll through a single cache at most this often. Values below 60 are clamped.",
+      "default": 300,
+      "min": 60,
+      "max": 3600
+    },
+    "report_delta_percent": {
+      "type": "number",
+      "title": "Report threshold (percentage points)",
+      "description": "After the first report of a session, inject the quota again only once some window has moved at least this many points. 0 reports on every prompt.",
+      "default": 3,
+      "min": 0,
+      "max": 100
+    },
+    "pace_caution_lead": {
+      "type": "number",
+      "title": "Caution lead (percentage points)",
+      "description": "How far usage may run ahead of the window's elapsed time before the pace counts as worth noting. 90% used at 90% elapsed is fine; 90% used at 40% elapsed is not.",
+      "default": 10,
+      "min": 0,
+      "max": 100
+    },
+    "pace_alarm_lead": {
+      "type": "number",
+      "title": "Alarm lead (percentage points)",
+      "description": "Lead at which the injected context adds advice to spend the remaining budget deliberately.",
+      "default": 25,
+      "min": 0,
+      "max": 100
+    },
+    "spent_percent": {
+      "type": "number",
+      "title": "Spent threshold (percent)",
+      "description": "Usage at or above this counts as a spent window regardless of pace, and Claude is told to prefer wrapping up.",
+      "default": 95,
+      "min": 1,
+      "max": 100
+    },
+    "visible_alerts": {
+      "type": "boolean",
+      "title": "Show alerts in the transcript",
+      "description": "Surface a message to you when a quota state gets worse, not only to Claude. Improvements are never announced.",
+      "default": true
+    },
+    "wrap_up_nudge": {
+      "type": "boolean",
+      "title": "Advise Claude when quota is tight",
+      "description": "When a window is spent or badly outpacing its clock, add an instruction to prefer finishing and handing off over starting large new work.",
+      "default": true
+    },
+    "keep_history": {
+      "type": "boolean",
+      "title": "Record poll history",
+      "description": "Append each poll to history.ndjson in the plugin data directory (pruned to 30 days), so the MCP tool can report trends.",
+      "default": true
+    },
+    "request_timeout_seconds": {
+      "type": "number",
+      "title": "Request timeout (seconds)",
+      "description": "How long a poll may take before it is abandoned. A timed-out poll falls back to the last cached reading, and tells Claude that the refresh failed.",
+      "default": 5,
+      "min": 1,
+      "max": 30
+    },
+    "debug_log": {
+      "type": "boolean",
+      "title": "Log errors",
+      "description": "Append internal errors to errors.ndjson in the plugin's data directory. Hooks stay non-blocking either way; this is the on-disk record, separate from the failure Claude is told about.",
+      "default": false
+    }
+  }
+}
