@@ -1,7 +1,7 @@
 {
   "name": "timings",
   "displayName": "Timings",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gives Claude a sense of elapsed time: idle gaps between turns, assistant turn duration split by tool vs model, and durations for individual tool calls.",
   "keywords": [
     "timing",

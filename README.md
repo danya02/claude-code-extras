@@ -24,6 +24,11 @@ Everything here is meant to be dropped into an unfamiliar machine and work:
   with it); no `jq`, no `npm install`.
 - **Hooks never block.** Any internal failure exits 0 with no output.
 - **Tests run with `node <plugin>/tests/run.mjs`**, no framework, no network.
+- **Bump `version` in `plugin.json` for every change you want installed.**
+  Installing pulls the marketplace copy into `~/.claude/plugins/cache/`, and an
+  unchanged version leaves the cached copy in place — the update reports success
+  while the old code keeps running. The quickest way to tell which copy is live
+  is to look for something only the new one writes.
 
 ## Development
 
