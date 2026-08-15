@@ -4,7 +4,7 @@
 // Run with `node plugins/timings/tests/run.mjs`. No dependencies, no network.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,15 +53,20 @@ console.log("timings plugin");
 console.log("\n  full turn");
 run({ ...S, hook_event_name: "SessionStart" });
 const first = run({ ...S, hook_event_name: "UserPromptSubmit", user_input: "hi" });
-check("first prompt carries wall-clock time", /now=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}/.test(ctx(first)), ctx(first));
+check("first prompt carries clock time only", /<timing-prompt>now=\d{2}:\d{2}:\d{2}/.test(ctx(first)), ctx(first));
+check("no ISO datetime is injected", !/\d{4}-\d{2}-\d{2}T/.test(ctx(first)), ctx(first));
+check("the first prompt of a session carries the date", /date=\d{4}-\d{2}-\d{2}/.test(ctx(first)), ctx(first));
 check("first prompt has no idle (no prior Stop)", !ctx(first).includes("idle="), ctx(first));
+
+const sameDay = run({ ...S, hook_event_name: "UserPromptSubmit" });
+check("the date is not repeated within the same day", !ctx(sameDay).includes("date="), ctx(sameDay));
 
 run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_slow" });
 const slow = run(
   { ...S, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_slow" },
   { sleepMs: 1200, env: { CLAUDE_PLUGIN_OPTION_TOOL_THRESHOLD_SECONDS: "1" } },
 );
-check("slow tool is reported", /<timing>Bash took \d+s\.<\/timing>/.test(ctx(slow)), ctx(slow));
+check("slow tool is reported", /<timing-tool>Bash took \d+s\.<\/timing-tool>/.test(ctx(slow)), ctx(slow));
 
 run({ ...S, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "toolu_fast" });
 const fast = run({ ...S, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "toolu_fast" });
@@ -89,6 +94,56 @@ const failed = run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", too
   { sleepMs: 1200, env: { CLAUDE_PLUGIN_OPTION_TOOL_THRESHOLD_SECONDS: "1" } },
 );
 check("failed tool is still timed", /Bash ran for \d+s/.test(ctx(failed)), ctx(failed));
+
+// --- approval wait is not tool time: the `cat` that reported as 40s ---
+console.log("\n  approval wait");
+run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_approve" });
+run({ ...S, hook_event_name: "PermissionRequest", tool_name: "Bash", tool_use_id: "toolu_approve" }, { sleepMs: 1200 });
+const approved = run(
+  { ...S, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_approve" },
+  { env: { CLAUDE_PLUGIN_OPTION_TOOL_THRESHOLD_SECONDS: "0" } },
+);
+check("approval wait is excluded from the duration", /Bash took 0s/.test(ctx(approved)), ctx(approved));
+check("approval wait is still reported", /plus \d+s waiting for approval/.test(ctx(approved)), ctx(approved));
+
+// --- an interrupted call: no Post, so the stamp is the only evidence ---
+console.log("\n  interrupts");
+run({ ...S, hook_event_name: "Stop" });
+run({ ...S, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "toolu_killed" });
+const afterKill = run({ ...S, hook_event_name: "UserPromptSubmit" }, { sleepMs: 1100 });
+check("an interrupted call is reported", ctx(afterKill).includes("<timing-interrupt>"), ctx(afterKill));
+check("the interrupted tool is named", /Bash was started \d+s before this message/.test(ctx(afterKill)), ctx(afterKill));
+check("the span is labelled a bound, not a measurement", /upper bound, not a measurement/.test(ctx(afterKill)), ctx(afterKill));
+check("idle is suppressed after an interrupt", !ctx(afterKill).includes("idle="), ctx(afterKill));
+const clearedStamps = readdirSync(join(dataDir, "sessions", S.session_id, "tools"));
+check("the orphan stamp is consumed, not re-reported", clearedStamps.length === 0, clearedStamps.join(", "));
+const quietAfter = run({ ...S, hook_event_name: "UserPromptSubmit" });
+check("the interrupt is not reported twice", !ctx(quietAfter).includes("<timing-interrupt>"), ctx(quietAfter));
+
+// --- compaction: the gap that matters is measured at the next prompt ---
+console.log("\n  compaction");
+run({ ...S, hook_event_name: "PreCompact" });
+const afterCompact = run({ ...S, hook_event_name: "UserPromptSubmit" }, { sleepMs: 1100 });
+check("the compaction gap is reported", /<timing-compaction>compacted \d+s ago, at \d{2}:\d{2}:\d{2}/.test(ctx(afterCompact)), ctx(afterCompact));
+const afterCompact2 = run({ ...S, hook_event_name: "UserPromptSubmit" });
+check("the compaction is reported once", !ctx(afterCompact2).includes("<timing-compaction>"), ctx(afterCompact2));
+
+// --- session start: only worth saying something when time actually passed ---
+console.log("\n  session start");
+const resumed = run({ ...S, hook_event_name: "SessionStart", source: "resume" });
+check("a resumed session says so", /<timing-session>source=resume/.test(ctx(resumed)), ctx(resumed));
+const plainStart = run({ session_id: "test-session-fresh", hook_event_name: "SessionStart", source: "startup" });
+check("a fresh startup stays silent", plainStart.stdout.trim() === "", plainStart.stdout);
+
+// --- the event log: the plugin's own instrument ---
+console.log("\n  event log");
+const eventLog = readFileSync(join(dataDir, "sessions", S.session_id, "events.ndjson"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+run({ ...S, hook_event_name: "MessageDisplay" }); // no handler, must still be logged
+const withUnhandled = readFileSync(join(dataDir, "sessions", S.session_id, "events.ndjson"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+check("every event is logged", eventLog.length > 20, `${eventLog.length} entries`);
+check("events with no handler are logged too", withUnhandled.some((e) => e.ev === "MessageDisplay"), "MessageDisplay missing from the log");
+check("log entries carry a clock reading", eventLog.every((e) => /^\d{2}:\d{2}:\d{2}$/.test(e.clock)), JSON.stringify(eventLog[0]));
+check("tool events carry the tool name", eventLog.some((e) => e.ev === "PreToolUse" && e.tool === "Bash"), "no PreToolUse/Bash entry");
 
 // --- turn totals must not bleed across turns ---
 console.log("\n  turn isolation");
