@@ -1,9 +1,12 @@
 # Why this plugin exists
 
 Findings from an investigation on 2026-08-17, across 113 session transcripts in
-`~/.claude/projects` plus direct probing of the running harness. This supersedes
-`edit-tool-handoff.md` at the repo root, which was written from a single session
-and got two important things wrong.
+`~/.claude/projects` plus direct probing of the running harness.
+
+It started from a handoff document written on 2026-08-14 by a session in another
+repo, which had noticed the same habit from the inside. That document was
+temporary and is not kept here; the parts of it worth keeping are quoted below,
+including the two claims it got wrong.
 
 ## What was actually happening
 
