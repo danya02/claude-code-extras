@@ -1,0 +1,8 @@
+{
+  "name": "super-edit",
+  "displayName": "Super Edit",
+  "version": "0.1.0",
+  "description": "Batch file patches in one call with predicted match counts, plus a nudge away from in-place shell edits.",
+  "keywords": ["edit", "patch", "mcp", "hooks"],
+  "author": { "name": "Danya Generalov" }
+}

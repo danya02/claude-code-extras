@@ -14,6 +14,11 @@
       "name": "quota",
       "source": "./plugins/quota",
       "description": "Lets Claude see your Claude subscription usage: the 5-hour session window, the weekly windows and extra-usage credits, each as used% against elapsed%, so pace is visible rather than just the raw number."
+    },
+    {
+      "name": "super-edit",
+      "source": "./plugins/super-edit",
+      "description": "Applies a batch of file patches in one call, each stating how many matches it expects so a wrong pattern fails loudly instead of rewriting the file, with an atomic or per-patch-reporting mode; plus a non-blocking nudge away from in-place shell edits."
     }
   ]
 }

@@ -13,6 +13,7 @@ packaged as a plugin marketplace so they can be installed from any project.
 | --- | --- |
 | [timings](plugins/timings) | Gives Claude a sense of elapsed time: idle gaps between turns, assistant turn duration split by tool vs model, and per-tool-call durations. |
 | [quota](plugins/quota) | Lets Claude see your Claude subscription usage: the 5-hour session window, the weekly windows and extra-usage credits, each as used% against elapsed%, so pace is visible rather than just the raw number. |
+| [super-edit](plugins/super-edit) | Applies a batch of file patches in one call, each stating how many matches it expects so a wrong pattern fails loudly instead of rewriting the file. Atomic or per-patch reporting, plus a nudge away from in-place shell edits. |
 
 Install one with `/plugin install <name>@claude-code-extras`.
 
