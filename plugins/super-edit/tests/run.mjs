@@ -75,6 +75,55 @@ check("expect must be positive", !!validate({ file: "a", find: "x", replace: "y"
   check("independent identifies the failing index", indep.results[1].index === 1 && !indep.results[1].ok);
 }
 
+// --- invalidated-by-an-earlier-patch, vs a genuine no-match -------------
+// These two fail identically at the point of failure but need opposite
+// responses from the caller, so the report has to tell them apart.
+{
+  const r = apply(
+    [
+      { file: "f", find: "gamma three", replace: "gamma THREE" },
+      { file: "f", find: "gamma three", replace: "gamma tres" },
+    ],
+    files({ f: "alpha one\ngamma three\n" }),
+  );
+  check("overlap fails the later patch", !r.ok && !r.results[1].ok);
+  check("overlap names the patch that moved the ground", r.results[1].invalidatedBy === 0, String(r.results[1].invalidatedBy));
+  check("overlap writes nothing under atomic", r.writes.size === 0);
+}
+{
+  const r = apply(
+    [
+      { file: "f", find: "alpha one", replace: "alpha ONE" },
+      { file: "f", find: "typo that is not there", replace: "x" },
+    ],
+    files({ f: "alpha one\ngamma three\n" }),
+  );
+  check("a genuine no-match is not blamed on the batch", !r.ok && r.results[1].invalidatedBy === undefined);
+}
+{
+  // Only the *pre-batch* text counts as exoneration: if the text was never
+  // there, an earlier patch on the same file is not the explanation.
+  const r = apply(
+    [
+      { file: "f", find: "alpha one", replace: "alpha ONE" },
+      { file: "f", find: "alpha ONE", replace: "alpha 1" },
+    ],
+    files({ f: "alpha one\n" }),
+  );
+  check("a patch matching an earlier patch's output still succeeds", r.ok && r.writes.get("f") === "alpha 1\n");
+}
+
+// --- count wording ------------------------------------------------------
+{
+  const r = apply([{ file: "f", find: "x", replace: "y", expect: 3 }], files({ f: "x" }));
+  check("singular count reads '1 match'", /found 1 match, expected 3/.test(r.results[0].error), r.results[0].error);
+}
+{
+  const r = apply([{ file: "f", regex: "x", replace: "y", expect: 3 }], files({ f: "x" }));
+  check("singular regex count reads '1 time'", /matched 1 time, expected 3/.test(r.results[0].error), r.results[0].error);
+}
+check("validate numbers patches one-based", /patch #1\b/.test(validate({ file: "a", replace: "y" }, 0)));
+
 // --- sequential application within a file ------------------------------
 {
   const r = apply(

@@ -145,3 +145,69 @@ worth checking the nudge lands as a nudge and not as noise.
 There is no pass/fail here, and one run proves nothing. Record it over several
 sessions; if the shell still wins on a file that is fully in context, the answer
 is prompt guidance, not tooling.
+
+## 8. The budget refills when the advice is taken
+
+Added after a live session went silent on the one call it was built to catch:
+the budget had been spent earlier and never came back, so the longest editing
+session — the one that needed the nudge most — got none of it.
+
+- **Agent:** trigger the nudge until the message says `0 more warnings`.
+- **Agent:** confirm a further `sed -i` produces nothing.
+- **Agent:** make any successful `super_edit` call.
+- **Agent:** run the `sed -i` again.
+
+**Expected:** the nudge is back, with the full budget. Heeded advice refills;
+ignored advice still spends. If a `Read` or an `Edit` also refills it, the
+`PostToolUse` matcher is too broad — only `super_edit` counts as heeding.
+
+## 9. Gated-call detection, which needs a real dialog
+
+The point of this one is that **a permission prompt is invisible to a hook, but
+the wait for it is not.** Requires a prompting mode; in `bypassPermissions` there
+is nothing to detect and the correct result is silence.
+
+- **Human:** start a session in **Edit automatically** (`acceptEdits`) with the
+  tool *not* in any `permissions.allow` list.
+- **Agent:** make a `super_edit` call.
+- **Human:** approve it — **as fast as you can**, without reading. This is the
+  case the threshold has to survive.
+- **Agent:** report whether injected context arrived telling you to relay an
+  allowlisting suggestion, and quote the measured wait it names.
+
+**Expected:** it fires, and the reported wait is **6s or more even on an instant
+approval**. Measured on this harness, a gated call carries ~6s of latency before
+the dialog reaches the human at all: 7439 ms for an immediate approval, 12904 ms
+for a deliberate ~10s wait. An ungated call is single-digit milliseconds.
+
+That gap is the whole basis for `GATED_MS` being 3000. **If this check ever
+reports a wait near or under 3s, the floor is not universal and the threshold is
+wrong** — that is the result worth recording, more than a pass.
+
+- **Agent:** make a second `super_edit` call and approve it the same way.
+
+**Expected:** silence. The advice is actionable once per session.
+
+## 10. The reload gotcha, three ways
+
+Three separate mechanisms in this system fail identically, and each one has
+already cost a debugging session:
+
+- **permissions** — approving via the dialog's *project* option writes
+  `.claude/settings.json` correctly and does **not** apply until the harness
+  reloads; the next call prompts again. The *session*-scoped option applies now.
+- **hooks** — registered at session start. Adding one mid-session does nothing,
+  silently: the script is never invoked, so it looks like a broken script.
+- **MCP servers / plugin versions** — see the top of this file.
+
+To check the permission half:
+
+- **Human:** with the tool already listed in `.claude/settings.json`, start a
+  **fresh** session in `acceptEdits`.
+- **Agent:** make a `super_edit` call.
+
+**Expected:** it does **not** prompt. If it still does, then a project-scoped
+allow is not honoured for MCP tools at all, and check 9's stage-2 advice is
+wrong — try a server-level rule (the name with its `__super_edit` suffix
+removed) and record which form works. One live session reported still being
+prompted here after a restart, so treat this as **open, not settled.**

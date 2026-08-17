@@ -26,9 +26,11 @@ const TOOL = {
     "states how many matches it expects. A count mismatch fails the patch instead of applying it: " +
     "if you expected 10 occurrences and there are 8, your recollection of the file is wrong and you " +
     "should re-read it rather than change 8 things.\n\n" +
-    "mode=atomic (default) writes nothing unless every patch succeeds. mode=independent applies the " +
-    "patches that succeed and reports each one that did not, which is what you want on a large batch " +
-    "where you need to know which entry was wrong.",
+    "mode=atomic (default) writes nothing — to any file in the batch, not merely the file that " +
+    "failed — unless every patch succeeds. Patches are applied to in-memory buffers and only reach " +
+    "disk once all of them have, so there is no partial state to roll back. mode=independent applies " +
+    "the patches that succeed and reports each one that did not, which is what you want on a large " +
+    "batch where you need to know which entry was wrong.",
   inputSchema: {
     type: "object",
     properties: {
@@ -168,8 +170,8 @@ function report({ mode, results, files, writes, written, writeFailures, readErro
     lines.push(`Applied ${successes.length} patch${successes.length === 1 ? "" : "es"} across ${written.length} file${written.length === 1 ? "" : "s"}.`);
   } else if (mode === "atomic") {
     lines.push(
-      `ATOMIC BATCH ABORTED — nothing was written. ${failures.length} of ${results.length} patches failed; ` +
-        `the other ${successes.length} would have applied cleanly.`,
+      `ATOMIC BATCH ABORTED — nothing was written. ${failures.length} of ${results.length} patches failed` +
+        (successes.length ? `; the other ${successes.length} would have applied cleanly.` : "."),
     );
   } else {
     lines.push(`Applied ${successes.length} of ${results.length} patches; ${failures.length} failed. Files written: ${written.length}.`);
@@ -178,13 +180,24 @@ function report({ mode, results, files, writes, written, writeFailures, readErro
   if (failures.length) {
     lines.push("", "Failed:");
     for (const f of failures) {
-      lines.push(`  [${f.index}] ${f.file ?? "?"} — ${f.error}`);
+      lines.push(`  patch #${f.index + 1}  ${f.file ?? "?"} — ${f.error}`);
+      if (f.invalidatedBy !== undefined) {
+        lines.push(
+          `        This text IS in the file on disk — patch #${f.invalidatedBy + 1} rewrote this region` +
+            ` earlier in the batch, and patches build on each other. Your view of the file was right:` +
+            ` re-order or rewrite this patch. Do not re-read.`,
+        );
+      }
       if (readErrors.has(f.file)) lines.push(`        read error: ${readErrors.get(f.file)}`);
     }
-    lines.push(
-      "",
-      "A count mismatch means the file does not look the way you think it does. Re-read it before retrying.",
-    );
+    // Only offer the re-read advice for failures it actually fits. Telling the
+    // caller to go hunting for a typo that is not there is worse than silence.
+    if (failures.some((f) => f.invalidatedBy === undefined)) {
+      lines.push(
+        "",
+        "A count mismatch means the file does not look the way you think it does. Re-read it before retrying.",
+      );
+    }
   }
 
   if (writeFailures.length) {

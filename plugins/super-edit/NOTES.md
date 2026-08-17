@@ -144,3 +144,76 @@ escape hatch is a counter file holding the number of warnings remaining:
 
 - **delete it** → reset to the full budget, keep getting warnings;
 - **write `0` into it** → expire it early and stop getting them.
+
+## Field test in a live session, 2026-08-17
+
+A session working on an unrelated project (wlan-site-survey) used the tool for
+real work, then probed its failure modes deliberately. Findings, in order of how
+much they changed the design.
+
+**The approval gradient is inverted, and no wording fixes it.** In "Edit
+automatically" mode, `Edit` runs free and `super_edit` — an MCP tool — prompts the
+user on *every* call. The safest of the two is the one that costs a human
+decision, and the one whose match counts are declared and whose failures are loud
+is the one a user learns to dread.
+
+`sed -i` also ran free and silent in that session, but do not read that as Bash
+being ungated: an hour of shell work had accumulated per-session approvals. In a
+fresh session Bash surfaces too, and the honest ladder is `Edit` free, `Bash`
+prompting, `super_edit` prompting. That is the real indictment — price should
+track capability, and `super_edit` is *strictly more constrained* than the Bash it
+replaces: it can only substitute text whose occurrence count the caller declared
+in advance, atomically, failing loudly on a miss. Bash can do anything. Charging
+the same interrupt for both is what needs fixing, and it is why the nudge firing
+on a legitimate-looking bulk `cat >> file` append is correct rather than noise:
+the append is the more powerful operation, whatever it looks like.
+
+Measured, both directions:
+approving with "allow for this project" wrote `.claude/settings.json` correctly
+but had no effect until reload, so the very next call prompted again. Hence the
+Permissions section in the README: pre-approving is the fix, and the
+session-scoped option is the one that takes effect now.
+
+A corollary worth remembering when tuning the nudge: from the caller's side a
+pending approval and a denial are **indistinguishable** — both surface as "the
+user doesn't want to proceed". It cannot adapt to the cost of an interrupt it
+never sees. So any guidance about when to prefer `Edit` has to be mechanical
+(patch count, matcher kind) rather than a judgment call about "simple enough";
+the caller has no feedback signal to calibrate judgment against.
+
+**The budget was spent exactly when it mattered.** Same session: by the time the
+`sed -i` test ran, the warning budget was exhausted and the hook said nothing on
+the one call it was designed to catch. A long editing session is both where the
+habit reasserts itself and, under a spend-only budget, where the nudge is gone.
+Fixed by refilling on `PostToolUse` for `super_edit` — heeded advice buys the
+budget back, ignored advice still spends it, so the alarm-fatigue property that
+motivated the budget survives.
+
+**A count mismatch had two causes and one message.** When an earlier patch in the
+batch rewrites a later patch's target, the failure was byte-identical to a
+genuine typo, and the trailing "re-read the file" advice was actively wrong: the
+caller's view of the file had been *correct*. Both buffers are already in hand,
+so the fix is cheap — if the matcher hits the pre-batch text but not the current
+one, name the patch that moved the ground and say not to re-read. The generic
+advice is now printed only for failures it fits.
+
+**`expect` is the part that earns the call**, unprompted and twice. Reporting the
+actual count (`found 3 matches, expected 1`) is what makes a retry possible with
+no re-read. Cosmetics fixed alongside: one-based patch numbers everywhere (the
+prose said "1 of 3" while the list said `[0]`), singular `1 match` / `1 time`, and
+no more "the other 0 would have applied cleanly".
+
+**`regex` went unused, and the tell was where the caller went instead.** Eight
+calls, zero regex — `find` wins for text you wrote minutes ago. But two `sed -i`
+calls in the same session were regex's case exactly: rewriting a printf format
+string from 18 to 20 `%s` (`regex: "(%s,){17}%s"`, `expect: 1` — shorter than the
+literal and self-verifying), and bumping a default value inside a known pattern.
+`find` fits *text you remember*; `regex` fits a *shape*. Those moments feel like
+shell jobs, which is why they leak to `sed`. If regex adoption is ever worth
+chasing, the precise population is `sed -i` invocations containing a quantifier
+or a capture group — not a general mention in the description.
+
+Sample caveat, from the reporter: one session, markdown and shell only, editing
+content it had authored minutes earlier. A session editing unfamiliar code would
+hit the overlap case harder, since patch ordering matters more when you cannot
+hold the file in your head.

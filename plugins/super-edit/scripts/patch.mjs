@@ -10,7 +10,9 @@ export const DEFAULT_CONTEXT = 3;
 // caller has not predicted is the case where a wrong pattern silently rewrites
 // the file, which is the whole failure mode this tool exists to prevent.
 export function validate(patch, index) {
-  const where = `patch ${index}`;
+  // One-based, to match how the report numbers patches and how the caller
+  // counts them when reading its own argument list back.
+  const where = `patch #${index + 1}`;
   if (!patch || typeof patch !== "object") return `${where}: not an object`;
   if (typeof patch.file !== "string" || !patch.file) return `${where}: missing "file"`;
   const hasFind = typeof patch.find === "string";
@@ -41,35 +43,45 @@ function countLiteral(text, needle) {
   return n;
 }
 
+// How many times this patch's matcher hits `text`. Split out from `applyOne`
+// because the overlap check below has to ask the same question of a second
+// buffer: the file as it was before the batch started.
+export function countMatches(text, patch) {
+  if (typeof patch.find === "string") return countLiteral(text, patch.find);
+  const re = new RegExp(patch.regex, patch.flags ? ensureGlobal(patch.flags) : "g");
+  return (text.match(re) ?? []).length;
+}
+
+function plural(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 // Returns { text, count } or { error }. Applies every match, having already
 // confirmed the count is the one the caller predicted.
 function applyOne(text, patch) {
   const expect = patch.expect ?? 1;
+  const isLiteral = typeof patch.find === "string";
+  const found = countMatches(text, patch);
 
-  if (typeof patch.find === "string") {
-    const found = countLiteral(text, patch.find);
-    if (found !== expect) {
+  if (found !== expect) {
+    if (isLiteral) {
       return {
         error:
           found === 0
             ? `no match for the literal text (expected ${expect})`
-            : `found ${found} matches, expected ${expect}`,
+            : `found ${plural(found, "match", "matches")}, expected ${expect}`,
       };
     }
-    return { text: text.split(patch.find).join(patch.replace), count: found };
-  }
-
-  const re = new RegExp(patch.regex, patch.flags ? ensureGlobal(patch.flags) : "g");
-  const found = (text.match(re) ?? []).length;
-  if (found !== expect) {
     return {
       error:
         found === 0
           ? `regex matched nothing (expected ${expect})`
-          : `regex matched ${found} times, expected ${expect}`,
+          : `regex matched ${plural(found, "time", "times")}, expected ${expect}`,
     };
   }
-  re.lastIndex = 0;
+
+  if (isLiteral) return { text: text.split(patch.find).join(patch.replace), count: found };
+  const re = new RegExp(patch.regex, patch.flags ? ensureGlobal(patch.flags) : "g");
   return { text: text.replace(re, patch.replace), count: found };
 }
 
@@ -111,6 +123,9 @@ export function changedRegions(before, after, context = DEFAULT_CONTEXT) {
 export function apply(patches, files, mode = "atomic") {
   const buffers = new Map();
   const results = [];
+  // Index of the last patch that actually rewrote each file, so a later failure
+  // on that file can name the culprit rather than just the symptom.
+  const lastWriter = new Map();
   let anyFailure = false;
 
   for (const [i, patch] of patches.entries()) {
@@ -129,11 +144,21 @@ export function apply(patches, files, mode = "atomic") {
     const current = buffers.has(patch.file) ? buffers.get(patch.file) : files.get(patch.file);
     const outcome = applyOne(current, patch);
     if (outcome.error) {
-      results.push({ index: i, file: patch.file, ok: false, error: outcome.error });
+      const failure = { index: i, file: patch.file, ok: false, error: outcome.error };
+      // Distinguish "your model of the file is wrong" from "an earlier patch in
+      // THIS batch moved the ground under you". They read identically at the
+      // point of failure but demand opposite responses: re-read the file, versus
+      // re-order or rewrite this patch and leave the file alone. Only the second
+      // is detectable here, by re-asking the question of the pre-batch text.
+      if (buffers.has(patch.file) && countMatches(files.get(patch.file), patch) === (patch.expect ?? 1)) {
+        failure.invalidatedBy = lastWriter.get(patch.file);
+      }
+      results.push(failure);
       anyFailure = true;
       continue;
     }
     buffers.set(patch.file, outcome.text);
+    lastWriter.set(patch.file, i);
     results.push({ index: i, file: patch.file, ok: true, replacements: outcome.count });
   }
 

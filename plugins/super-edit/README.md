@@ -54,6 +54,37 @@ the number of warnings remaining:
 - **write `0` into it** → stop the warnings early;
 - **delete it** → reset to the full budget and keep getting them.
 
+The budget is spent by warnings that are **ignored**. A `PostToolUse` pass on
+`super_edit` refills it, so taking the advice buys back the nudge. Without that,
+the budget ran out partway through a long editing session and the hook was
+silent for the rest of it — measured, not hypothetical — which is precisely the
+session that needed it.
+
+## Permissions
+
+`super_edit` is an MCP tool, so in any mode that surfaces tool calls for approval
+(**Edit automatically**, **Ask every time**) it prompts on **every call**, while
+the `sed -i` it exists to replace runs unprompted. That gradient is backwards on
+risk: the tool that declares match counts, applies atomically and fails loudly is
+the only one that costs a human decision.
+
+Pre-approve it to remove the interrupt:
+
+```jsonc
+// .claude/settings.json
+{ "permissions": { "allow": ["mcp__plugin_super-edit_super-edit__super_edit"] } }
+```
+
+Two gotchas, both measured:
+
+- Approving via **"allow for this project"** writes that file but does **not**
+  take effect until the harness reloads — the call right after approval prompts
+  again. Choose the **session**-scoped option for immediate effect, or add the
+  line above and restart.
+- The name embeds the plugin *and* server name (`plugin_super-edit_super-edit`),
+  with single underscores between them and a double before the tool. Under a
+  different install path it will differ.
+
 ## Testing
 
 ```sh
