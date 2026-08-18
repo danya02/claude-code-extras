@@ -72,7 +72,7 @@ Pre-approve it to remove the interrupt:
 
 ```jsonc
 // .claude/settings.json
-{ "permissions": { "allow": ["mcp__plugin_super-edit_super-edit__super_edit"] } }
+{ "permissions": { "allow": ["mcp__plugin_super-edit_se__super_edit"] } }
 ```
 
 Two gotchas, both measured:
@@ -81,9 +81,11 @@ Two gotchas, both measured:
   take effect until the harness reloads — the call right after approval prompts
   again. Choose the **session**-scoped option for immediate effect, or add the
   line above and restart.
-- The name embeds the plugin *and* server name (`plugin_super-edit_super-edit`),
-  with single underscores between them and a double before the tool. Under a
-  different install path it will differ.
+- The plugin-registered name embeds the plugin *and* server name
+  (`plugin_super-edit_se` — server key `se`, kept short for exactly this
+  reason), with a double underscore before the tool. Registering the server at
+  user scope instead gives the shorter `mcp__super-edit__super_edit`, which is
+  what sessions guess first.
 
 ## Testing
 
@@ -94,9 +96,9 @@ node plugins/super-edit/tests/run.mjs   # logic, heuristics, MCP protocol
 `tests/MANUAL.md` covers what a unit test cannot: how a live session reacts to
 these writes. Checks 1–4 there can be driven headlessly; 5 onward need a human.
 
-For iterating without the plugin install/version dance, register the server
-directly:
+For iterating without the plugin install/version dance, register the server at
+user scope — it runs the working tree directly, so edits are live immediately:
 
 ```sh
-claude mcp add super-edit-dev --scope local -- node "$PWD/plugins/super-edit/scripts/mcp.mjs"
+claude mcp add super-edit --scope user -- node "$PWD/plugins/super-edit/scripts/mcp.mjs"
 ```

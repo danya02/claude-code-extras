@@ -147,6 +147,15 @@ export function runEdit(args) {
 
   const { ok, results, writes } = apply(patches, files, mode);
 
+  // A single literal `find` with the default count is exactly what plain Edit
+  // does — and repeating a large `find` verbatim costs more here than there,
+  // where the outgoing text never needs to travel. Size is not the test; using
+  // no capability Edit lacks is.
+  const editEquivalent =
+    patches.length === 1 &&
+    typeof patches[0]?.find === "string" &&
+    (patches[0].expect === undefined || patches[0].expect === 1);
+
   const written = [];
   const writeFailures = [];
   for (const [path, text] of writes) {
@@ -158,16 +167,25 @@ export function runEdit(args) {
     }
   }
 
-  return { content: [{ type: "text", text: report({ mode, results, files, writes, written, writeFailures, readErrors, context, ok }) }] };
+  return { content: [{ type: "text", text: report({ mode, results, files, writes, written, writeFailures, readErrors, context, ok, editEquivalent }) }] };
 }
 
-function report({ mode, results, files, writes, written, writeFailures, readErrors, context, ok }) {
+function report({ mode, results, files, writes, written, writeFailures, readErrors, context, ok, editEquivalent }) {
   const lines = [];
   const failures = results.filter((r) => !r.ok);
   const successes = results.filter((r) => r.ok);
 
   if (ok) {
     lines.push(`Applied ${successes.length} patch${successes.length === 1 ? "" : "es"} across ${written.length} file${written.length === 1 ? "" : "s"}.`);
+    if (editEquivalent) {
+      lines.push(
+        "",
+        "Note: this was one literal substitution with the expected count — plain Edit does the same" +
+          " in one call, without repeating the outgoing text or paying this report. Use Edit for simple" +
+          " substitutions; reach for super_edit when you want its advanced features: several patches at" +
+          " once, regex, or a predicted match count.",
+      );
+    }
   } else if (mode === "atomic") {
     lines.push(
       `ATOMIC BATCH ABORTED — nothing was written. ${failures.length} of ${results.length} patches failed` +
@@ -181,6 +199,10 @@ function report({ mode, results, files, writes, written, writeFailures, readErro
     lines.push("", "Failed:");
     for (const f of failures) {
       lines.push(`  patch #${f.index + 1}  ${f.file ?? "?"} — ${f.error}`);
+      if (f.matches?.length) {
+        const extra = f.found > f.matches.length ? ` (+${f.found - f.matches.length} more)` : "";
+        lines.push(`        found at: ${f.matches.join("; ")}${extra}`);
+      }
       if (f.invalidatedBy !== undefined) {
         lines.push(
           `        This text IS in the file on disk — patch #${f.invalidatedBy + 1} rewrote this region` +
@@ -195,7 +217,8 @@ function report({ mode, results, files, writes, written, writeFailures, readErro
     if (failures.some((f) => f.invalidatedBy === undefined)) {
       lines.push(
         "",
-        "A count mismatch means the file does not look the way you think it does. Re-read it before retrying.",
+        "A count mismatch means the file does not look the way you think it does. Re-read it before retrying" +
+          " (any 'found at' locations above are from the file as this batch saw it).",
       );
     }
   }

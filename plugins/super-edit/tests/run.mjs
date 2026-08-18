@@ -113,6 +113,24 @@ check("expect must be positive", !!validate({ file: "a", find: "x", replace: "y"
   check("a patch matching an earlier patch's output still succeeds", r.ok && r.writes.get("f") === "alpha 1\n");
 }
 
+// --- count mismatch shows where the matches are --------------------------
+{
+  const r = apply([{ file: "f", find: "x", replace: "y", expect: 3 }], files({ f: "a\nx\nb\nx\nc\nx\nd\nx\ne\nx\n" }));
+  const res = r.results[0];
+  check("mismatch carries the found count", !res.ok && res.found === 5, String(res.found));
+  check("mismatch samples carry line numbers", res.matches?.[0] === "line 2: x" && res.matches?.[1] === "line 4: x", JSON.stringify(res.matches));
+  check("samples are capped at three", res.matches.length === 3);
+}
+{
+  const r = apply([{ file: "f", regex: "l\\w+", replace: "x", expect: 99 }], files({ f: "one line\ntwo lines\n" }));
+  const res = r.results[0];
+  check("regex mismatch samples match text", res.matches?.[0] === "line 1: line" && res.matches?.[1] === "line 2: lines", JSON.stringify(res.matches));
+}
+{
+  const r = apply([{ file: "f", find: "zzz", replace: "y" }], files({ f: "abc" }));
+  check("zero matches gives no samples", r.results[0].matches === undefined);
+}
+
 // --- count wording ------------------------------------------------------
 {
   const r = apply([{ file: "f", find: "x", replace: "y", expect: 3 }], files({ f: "x" }));
@@ -193,7 +211,25 @@ for (const cmd of shouldNotFlag) check(`ignores: ${cmd.slice(0, 40)}`, detect(cm
   check("server answers all three", replies.length === 3, proc.stdout + proc.stderr);
   check("server advertises super_edit", replies[1]?.result?.tools?.[0]?.name === "super_edit");
   check("end-to-end write lands on disk", readFileSync(target, "utf8") === "alpha\nBETA\ngamma\n");
-  check("report echoes the changed region", /BETA/.test(replies[2]?.result?.content?.[0]?.text ?? ""));
+  const appliedReport = replies[2]?.result?.content?.[0]?.text ?? "";
+  check("report echoes the changed region", /BETA/.test(appliedReport));
+  check("single literal call gets the use-Edit note", /plain Edit does the same/.test(appliedReport), appliedReport.slice(0, 120));
+
+  // A count mismatch, end to end: the report must show where the matches were.
+  writeFileSync(target, "alpha\nbeta\ngamma\nbeta\n");
+  const mismatch = spawnSync("node", [new URL("../scripts/mcp.mjs", import.meta.url).pathname], {
+    input:
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n" +
+      JSON.stringify({
+        jsonrpc: "2.0", id: 2, method: "tools/call",
+        params: { name: "super_edit", arguments: { patches: [{ file: target, find: "beta", replace: "B" }] } },
+      }) + "\n",
+    encoding: "utf8",
+  });
+  const mismatchReport = JSON.parse(mismatch.stdout.trim().split("\n")[1]).result.content[0].text;
+  check("mismatch report shows found count", /found 2 matches, expected 1/.test(mismatchReport), mismatchReport);
+  check("mismatch report shows match locations", /found at: line 2: beta; line 4: beta/.test(mismatchReport), mismatchReport);
+  check("mismatch report writes nothing", readFileSync(target, "utf8") === "alpha\nbeta\ngamma\nbeta\n");
   rmSync(dir, { recursive: true, force: true });
 }
 

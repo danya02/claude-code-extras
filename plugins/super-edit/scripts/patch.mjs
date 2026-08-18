@@ -43,6 +43,28 @@ function countLiteral(text, needle) {
   return n;
 }
 
+// First few match locations as "line N: snippet", so a count mismatch can show
+// the caller where the extra or missing matches live without a re-read.
+// Multi-line matches collapse to one line; long ones truncate.
+export function sampleMatches(text, patch, limit = 3) {
+  const out = [];
+  const lineAt = (idx) => 1 + (text.slice(0, idx).match(/\n/g) ?? []).length;
+  const snippet = (s) => s.replace(/\s+/g, " ").slice(0, 60);
+  if (typeof patch.find === "string") {
+    for (let i = text.indexOf(patch.find); i !== -1 && out.length < limit; i = text.indexOf(patch.find, i + patch.find.length)) {
+      out.push(`line ${lineAt(i)}: ${snippet(patch.find)}`);
+    }
+    return out;
+  }
+  const re = new RegExp(patch.regex, patch.flags ? ensureGlobal(patch.flags) : "g");
+  let m;
+  while (out.length < limit && (m = re.exec(text)) !== null) {
+    out.push(`line ${lineAt(m.index)}: ${snippet(m[0])}`);
+    if (m.index === re.lastIndex) re.lastIndex += 1; // zero-width match
+  }
+  return out;
+}
+
 // How many times this patch's matcher hits `text`. Split out from `applyOne`
 // because the overlap check below has to ask the same question of a second
 // buffer: the file as it was before the batch started.
@@ -64,12 +86,15 @@ function applyOne(text, patch) {
   const found = countMatches(text, patch);
 
   if (found !== expect) {
+    const matches = found > 0 ? sampleMatches(text, patch) : undefined;
     if (isLiteral) {
       return {
         error:
           found === 0
             ? `no match for the literal text (expected ${expect})`
             : `found ${plural(found, "match", "matches")}, expected ${expect}`,
+        found,
+        matches,
       };
     }
     return {
@@ -77,6 +102,8 @@ function applyOne(text, patch) {
         found === 0
           ? `regex matched nothing (expected ${expect})`
           : `regex matched ${plural(found, "time", "times")}, expected ${expect}`,
+      found,
+      matches,
     };
   }
 
@@ -144,7 +171,7 @@ export function apply(patches, files, mode = "atomic") {
     const current = buffers.has(patch.file) ? buffers.get(patch.file) : files.get(patch.file);
     const outcome = applyOne(current, patch);
     if (outcome.error) {
-      const failure = { index: i, file: patch.file, ok: false, error: outcome.error };
+      const failure = { index: i, file: patch.file, ok: false, error: outcome.error, found: outcome.found, matches: outcome.matches };
       // Distinguish "your model of the file is wrong" from "an earlier patch in
       // THIS batch moved the ground under you". They read identically at the
       // point of failure but demand opposite responses: re-read the file, versus
