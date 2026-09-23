@@ -3,6 +3,7 @@
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { apply, validate, diffHunks } from "../scripts/patch.mjs";
 import { detect } from "../scripts/hook.mjs";
@@ -241,7 +242,7 @@ for (const cmd of shouldNotFlag) check(`ignores: ${cmd.slice(0, 40)}`, detect(cm
 // One drive() is one server process, so token state carries across calls in
 // the sequence — which is exactly what the retry tests need.
 function drive(requests) {
-  const proc = spawnSync("node", [new URL("../scripts/mcp.mjs", import.meta.url).pathname], {
+  const proc = spawnSync("node", [fileURLToPath(new URL("../scripts/mcp.mjs", import.meta.url))], {
     input: requests.map((r) => JSON.stringify(r)).join("\n") + "\n",
     encoding: "utf8",
   });

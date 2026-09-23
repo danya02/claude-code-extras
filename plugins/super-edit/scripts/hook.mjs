@@ -19,7 +19,9 @@
 // it still shuts up, which is the alarm-fatigue property worth keeping.
 
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve, posix, win32 } from "node:path";
+import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const DEFAULT_BUDGET = 5;
 
@@ -159,9 +161,12 @@ export function detect(command, opts = {}) {
 function resolveTarget(raw, cwd) {
   if (!raw) return null;
   let path = raw.replace(/^['"]|['"]$/g, "");
-  if (path.startsWith("~/")) path = join(process.env.HOME || "", path.slice(2));
-  if (!path.startsWith("/")) path = join(cwd, path);
-  return path;
+  if (path.startsWith("~/")) path = join(process.env.HOME || homedir(), path.slice(2));
+  // Windows: Git Bash spells C:\x as /c/x, which Node would read as \c\x.
+  if (process.platform === "win32") path = path.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+  if (path.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(path)) return path;
+  // A POSIX-style cwd keeps POSIX joins even on Windows, so paths stay comparable.
+  return (/^[a-zA-Z]:|\\/.test(cwd) ? win32 : posix).join(cwd, path);
 }
 
 // Was this call gated behind a dialog, and if so what should the user be told?
@@ -219,7 +224,7 @@ function findAllowEntry(cwd, tool) {
   const server = tool.replace(/__[^_]+$/, "");
   for (const [rel, label] of SETTINGS_SCOPES) {
     const path = rel.startsWith("~/")
-      ? join(process.env.HOME || "", rel.slice(2))
+      ? join(process.env.HOME || homedir(), rel.slice(2))
       : join(cwd || process.cwd(), rel);
     try {
       const allow = JSON.parse(readFileSync(path, "utf8"))?.permissions?.allow;
@@ -268,7 +273,7 @@ function readStamp(path) {
 function counterFile(payload) {
   const base =
     process.env.CLAUDE_PLUGIN_DATA_DIR ||
-    join(process.env.HOME || "/tmp", ".claude", "super-edit");
+    join(process.env.HOME || homedir(), ".claude", "super-edit");
   const session = String(payload?.session_id ?? "session").replace(/[^\w-]/g, "");
   return join(base, `warnings-${session}`);
 }
@@ -301,4 +306,4 @@ function ok(additionalContext) {
   process.exit(0);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
