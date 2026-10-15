@@ -133,9 +133,18 @@ const EDGE_LINES = 8;
 // bloat that way, with the untouched middles skipped by every reader, so this
 // is now a real line diff. Distant changes produce separate hunks; changes
 // within 2*context of each other still merge, like a diff tool's hunks.
-export function diffHunks(before, after, context = DEFAULT_CONTEXT) {
+export function diffHunks(before, after, rawContext = DEFAULT_CONTEXT) {
+  // A negative context made spans run backwards (lastLine < firstLine) and shifted every hunk off its change.
+  const context = Number.isInteger(rawContext) ? Math.max(0, rawContext) : DEFAULT_CONTEXT;
   const a = before.split("\n");
   const b = after.split("\n");
+  // A file ending in "\n" splits into a phantom empty last element, which was reported as a line that does not
+  // exist ("lines 1–6" for a five-line file). Drop it, but only when both sides have it, so that adding or
+  // removing the final newline is still a visible change.
+  if (before.endsWith("\n") && after.endsWith("\n")) {
+    a.pop();
+    b.pop();
+  }
 
   // Common prefix and suffix shrink the LCS table to the changed middle —
   // usually a few lines — and bound the fallback when the middle is too big.

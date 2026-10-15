@@ -17,8 +17,28 @@
 // the whole 8-patch batch to fix one typo every time; the token exists so
 // they don't have to.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { apply, diffHunks } from "./patch.mjs";
+
+// Two spellings of one file ("f", "./f", a symlink, another letter case on Windows) must share one buffer. Keyed
+// by the raw string, each spelling is patched from the on-disk text and the last write silently discards the rest.
+// Every spelling is rewritten to the first one seen, so reports keep the name the caller used.
+export function unifyAliases(patches) {
+  const firstSpelling = new Map();
+  return patches.map((p) => {
+    if (typeof p?.file !== "string" || !p.file) return p;
+    let key;
+    try {
+      key = realpathSync.native(p.file);
+    } catch {
+      key = resolve(p.file); // unreadable or absent: the read step reports it
+    }
+    if (!firstSpelling.has(key)) firstSpelling.set(key, p.file);
+    const first = firstSpelling.get(key);
+    return first === p.file ? p : { ...p, file: first };
+  });
+}
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -208,6 +228,8 @@ export function runEdit(args) {
   const dryRun = args.dry_run === true;
   const context = Number.isInteger(args.context_lines) ? args.context_lines : 3;
   const reportMode = ["auto", "diff", "summary", "none"].includes(args.report) ? args.report : "auto";
+
+  patches = unifyAliases(patches);
 
   // Read every distinct file once, up front. A file that cannot be read is
   // recorded as absent rather than thrown, so the report can name it alongside

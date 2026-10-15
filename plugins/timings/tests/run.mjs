@@ -226,6 +226,15 @@ const resumed2 = run(
 );
 check("a resumed session can still measure its gap", /source=resume idle for \d+s, last active \d{2}:\d{2}:\d{2}/.test(ctx(resumed2)), ctx(resumed2));
 
+// The manifest must launch the script through node: a bare path relies on the shebang and exec bit, which a native
+// Windows shell does not honour.
+{
+  const manifest = JSON.parse(readFileSync(join(dirname(hook), "..", "hooks", "hooks.json"), "utf8"));
+  const commands = Object.values(manifest.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks.map((h) => h.command)));
+  check("hooks.json registers at least one hook", commands.length > 0);
+  check("every hook command launches through node", commands.every((c) => /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/hook\.mjs"$/.test(c)), commands.find((c) => !c.startsWith("node ")));
+}
+
 rmSync(dataDir, { recursive: true, force: true });
 console.log(`\n${failures ? "FAILED" : "PASSED"}: ${checks - failures}/${checks} checks`);
 process.exit(failures ? 1 : 0);

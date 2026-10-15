@@ -138,7 +138,7 @@ export async function getUsage({ force = false, now = Date.now() } = {}) {
     const auth = readToken();
     if (!auth) {
       return fallback(
-        `no OAuth token in ${process.env.CLAUDE_CONFIG_DIR || "~/.claude"}/.credentials.json ` +
+        `no OAuth token in ${join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), ".credentials.json")} ` +
           `(expected claudeAiOauth.accessToken; an API-key install has none)`,
       );
     }
